@@ -25,6 +25,10 @@ define( 'UUF_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'UUF_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'UUF_PLUGIN_VERSION', '0.1.0' );
 
+if ( ! defined( 'UUF_DEBUG' ) ) {
+	define( 'UUF_DEBUG', false );
+}
+
 require_once UUF_PLUGIN_DIR . 'includes/class-url-usage-finder-scanner.php';
 require_once UUF_PLUGIN_DIR . 'includes/class-url-usage-finder-replacer.php';
 require_once UUF_PLUGIN_DIR . 'includes/class-url-usage-finder-admin.php';

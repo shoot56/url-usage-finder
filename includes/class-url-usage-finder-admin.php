@@ -114,8 +114,14 @@ class URL_Usage_Finder_Admin {
 		wp_safe_redirect(
 			add_query_arg(
 				array(
-					'page'    => self::MENU_SLUG,
-					'replace' => 'done',
+					'page'        => self::MENU_SLUG,
+					'search'      => 'done',
+					'replace'     => 'done',
+					'uuf_old_url' => $old_url,
+					'uuf_sources' => $sources,
+					'uuf_updated' => isset( $summary['updated'] ) ? (int) $summary['updated'] : 0,
+					'uuf_replaced' => isset( $summary['replacements'] ) ? (int) $summary['replacements'] : 0,
+					'uuf_skipped' => isset( $summary['skipped'] ) ? (int) $summary['skipped'] : 0,
 				),
 				admin_url( 'tools.php' )
 			)
@@ -174,8 +180,14 @@ class URL_Usage_Finder_Admin {
 		wp_safe_redirect(
 			add_query_arg(
 				array(
-					'page'    => self::MENU_SLUG,
-					'preview' => 'done',
+					'page'        => self::MENU_SLUG,
+					'search'      => 'done',
+					'preview'     => 'done',
+					'uuf_old_url' => $old_url,
+					'uuf_sources' => $sources,
+					'uuf_changed' => isset( $preview['changed'] ) ? (int) $preview['changed'] : 0,
+					'uuf_replacements' => isset( $preview['replacements'] ) ? (int) $preview['replacements'] : 0,
+					'uuf_skipped' => isset( $preview['skipped'] ) ? (int) $preview['skipped'] : 0,
 				),
 				admin_url( 'tools.php' )
 			)
@@ -205,7 +217,7 @@ class URL_Usage_Finder_Admin {
 			exit;
 		}
 
-		fputcsv( $output, array( 'source', 'object', 'field', 'element', 'context', 'edit_link' ) );
+		fputcsv( $output, array( 'source', 'object', 'field', 'element', 'occurrences', 'context', 'edit_link', 'view_link' ) );
 
 		foreach ( $results as $row ) {
 			fputcsv(
@@ -215,8 +227,10 @@ class URL_Usage_Finder_Admin {
 					isset( $row['object_label'] ) ? (string) $row['object_label'] : '',
 					isset( $row['field'] ) ? (string) $row['field'] : '',
 					isset( $row['element_hint'] ) ? (string) $row['element_hint'] : '',
+					isset( $row['occurrences'] ) ? (int) $row['occurrences'] : 0,
 					isset( $row['context'] ) ? (string) $row['context'] : '',
 					isset( $row['edit_link'] ) ? (string) $row['edit_link'] : '',
+					isset( $row['view_link'] ) ? (string) $row['view_link'] : '',
 				)
 			);
 		}
@@ -288,19 +302,29 @@ class URL_Usage_Finder_Admin {
 	}
 
 	private static function render_replace_notice( $data ) {
-		if ( empty( $_GET['replace'] ) || empty( $data['replace_log'] ) || ! is_array( $data['replace_log'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( empty( $_GET['replace'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			return;
 		}
 
-		$log = $data['replace_log'];
+		$log = isset( $data['replace_log'] ) && is_array( $data['replace_log'] ) ? $data['replace_log'] : array();
+		if ( isset( $_GET['uuf_updated'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$log['updated'] = (int) $_GET['uuf_updated']; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		}
+		if ( isset( $_GET['uuf_replaced'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$log['replacements'] = (int) $_GET['uuf_replaced']; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		}
+		if ( isset( $_GET['uuf_skipped'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$log['skipped'] = (int) $_GET['uuf_skipped']; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		}
 		?>
 		<div class="notice notice-success is-dismissible">
 			<p>
 				<?php
 				printf(
-					/* translators: 1: updated count 2: skipped count */
-					esc_html__( 'Replacement completed. Updated: %1$d. Skipped: %2$d.', 'url-usage-finder' ),
+					/* translators: 1: updated row count 2: replacement count 3: skipped row count */
+					esc_html__( 'Replacement completed. Updated rows: %1$d. Replaced URL occurrences: %2$d. Skipped rows: %3$d.', 'url-usage-finder' ),
 					isset( $log['updated'] ) ? (int) $log['updated'] : 0,
+					isset( $log['replacements'] ) ? (int) $log['replacements'] : 0,
 					isset( $log['skipped'] ) ? (int) $log['skipped'] : 0
 				);
 				?>
@@ -356,6 +380,10 @@ class URL_Usage_Finder_Admin {
 	}
 
 	private static function render_search_debug( $debug ) {
+		if ( ! self::is_debug_enabled() ) {
+			return;
+		}
+
 		if ( empty( $_GET['search'] ) || 'done' !== $_GET['search'] ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			return;
 		}
@@ -412,6 +440,10 @@ class URL_Usage_Finder_Admin {
 		<?php
 	}
 
+	private static function is_debug_enabled() {
+		return defined( 'UUF_DEBUG' ) && UUF_DEBUG;
+	}
+
 	private static function render_results( $needle, $results, $sources ) {
 		if ( empty( $results ) ) {
 			return;
@@ -420,6 +452,7 @@ class URL_Usage_Finder_Admin {
 		$current_page  = isset( $_GET['uuf_paged'] ) ? max( 1, (int) $_GET['uuf_paged'] ) : 1; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		$total_results = count( $results );
 		$total_pages   = (int) ceil( $total_results / self::RESULTS_PER_PAGE );
+		$current_page  = min( $current_page, $total_pages );
 		$offset        = ( $current_page - 1 ) * self::RESULTS_PER_PAGE;
 		$page_rows     = array_slice( $results, $offset, self::RESULTS_PER_PAGE, true );
 		?>
@@ -442,8 +475,10 @@ class URL_Usage_Finder_Admin {
 					<th style="width:40px"><input type="checkbox" onclick="jQuery('.uuf-row-check').prop('checked', this.checked)" /></th>
 					<th><?php echo esc_html__( 'Source', 'url-usage-finder' ); ?></th>
 					<th><?php echo esc_html__( 'Object', 'url-usage-finder' ); ?></th>
+					<th><?php echo esc_html__( 'View', 'url-usage-finder' ); ?></th>
 					<th><?php echo esc_html__( 'Field', 'url-usage-finder' ); ?></th>
 					<th><?php echo esc_html__( 'Element', 'url-usage-finder' ); ?></th>
+					<th><?php echo esc_html__( 'Occurrences', 'url-usage-finder' ); ?></th>
 					<th><?php echo esc_html__( 'Context', 'url-usage-finder' ); ?></th>
 				</tr>
 				</thead>
@@ -459,8 +494,16 @@ class URL_Usage_Finder_Admin {
 								<?php echo esc_html( isset( $row['object_label'] ) ? (string) $row['object_label'] : '' ); ?>
 							<?php endif; ?>
 						</td>
+						<td>
+							<?php if ( ! empty( $row['view_link'] ) ) : ?>
+								<a href="<?php echo esc_url( $row['view_link'] ); ?>" target="_blank" rel="noopener noreferrer"><?php echo esc_html__( 'View', 'url-usage-finder' ); ?></a>
+							<?php else : ?>
+								&mdash;
+							<?php endif; ?>
+						</td>
 						<td><?php echo esc_html( isset( $row['field'] ) ? (string) $row['field'] : '' ); ?></td>
 						<td><?php echo esc_html( isset( $row['element_hint'] ) ? (string) $row['element_hint'] : '' ); ?></td>
+						<td><?php echo esc_html( isset( $row['occurrences'] ) ? (string) (int) $row['occurrences'] : '0' ); ?></td>
 						<td><code><?php echo esc_html( isset( $row['context'] ) ? (string) $row['context'] : '' ); ?></code></td>
 					</tr>
 				<?php endforeach; ?>
@@ -478,7 +521,7 @@ class URL_Usage_Finder_Admin {
 				<button type="button" class="button button-primary uuf-replace-submit"><?php echo esc_html__( 'Replace Selected', 'url-usage-finder' ); ?></button>
 			</p>
 		</form>
-		<?php self::render_pagination( $current_page, $total_pages ); ?>
+		<?php self::render_pagination( $current_page, $total_pages, $needle, $sources ); ?>
 		<script>
 			(function($){
 				$('.uuf-replace-submit').on('click', function(){
@@ -506,20 +549,86 @@ class URL_Usage_Finder_Admin {
 		<?php
 	}
 
-	private static function render_pagination( $current_page, $total_pages ) {
+	private static function render_pagination( $current_page, $total_pages, $needle, $sources ) {
 		if ( $total_pages <= 1 ) {
 			return;
 		}
 
-		$base_url = add_query_arg(
-			array(
-				'page'      => self::MENU_SLUG,
-				'uuf_paged' => '%#%',
-			),
-			admin_url( 'tools.php' )
+		$big      = 999999999;
+		$base_url = str_replace(
+			(string) $big,
+			'%#%',
+			add_query_arg(
+				array(
+					'page'        => self::MENU_SLUG,
+					'search'      => 'done',
+					'uuf_old_url' => $needle,
+					'uuf_sources' => $sources,
+					'uuf_paged'   => $big,
+				),
+				admin_url( 'tools.php' )
+			)
 		);
 
-		echo '<div class="tablenav"><div class="tablenav-pages">';
+		?>
+		<style>
+			.uuf-pagination {
+				display: flex;
+				justify-content: flex-end;
+				margin: 16px 0 0;
+			}
+
+			.uuf-pagination .tablenav-pages {
+				display: flex;
+				align-items: center;
+				gap: 6px;
+				float: none;
+				margin: 0;
+			}
+
+			.uuf-pagination__summary {
+				margin-right: 8px;
+				color: #646970;
+			}
+
+			.uuf-pagination .page-numbers {
+				display: inline-flex;
+				align-items: center;
+				justify-content: center;
+				min-width: 30px;
+				height: 30px;
+				padding: 0 8px;
+				border: 1px solid #c3c4c7;
+				border-radius: 3px;
+				background: #fff;
+				text-decoration: none;
+				box-sizing: border-box;
+			}
+
+			.uuf-pagination .page-numbers.current {
+				border-color: #2271b1;
+				background: #2271b1;
+				color: #fff;
+				font-weight: 600;
+			}
+
+			.uuf-pagination .page-numbers.dots {
+				border-color: transparent;
+				background: transparent;
+			}
+		</style>
+		<div class="tablenav uuf-pagination"><div class="tablenav-pages">
+			<span class="uuf-pagination__summary">
+				<?php
+				printf(
+					/* translators: 1: current page 2: total pages */
+					esc_html__( 'Page %1$d of %2$d', 'url-usage-finder' ),
+					$current_page,
+					$total_pages
+				);
+				?>
+			</span>
+		<?php
 		echo wp_kses_post(
 			paginate_links(
 				array(
@@ -529,6 +638,7 @@ class URL_Usage_Finder_Admin {
 					'total'     => $total_pages,
 					'prev_text' => '&laquo;',
 					'next_text' => '&raquo;',
+					'type'      => 'plain',
 				)
 			)
 		);
@@ -652,19 +762,29 @@ class URL_Usage_Finder_Admin {
 	}
 
 	private static function render_preview_notice( $data ) {
-		if ( empty( $_GET['preview'] ) || empty( $data['preview_log'] ) || ! is_array( $data['preview_log'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( empty( $_GET['preview'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			return;
 		}
 
-		$preview = $data['preview_log'];
+		$preview = isset( $data['preview_log'] ) && is_array( $data['preview_log'] ) ? $data['preview_log'] : array();
+		if ( isset( $_GET['uuf_changed'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$preview['changed'] = (int) $_GET['uuf_changed']; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		}
+		if ( isset( $_GET['uuf_replacements'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$preview['replacements'] = (int) $_GET['uuf_replacements']; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		}
+		if ( isset( $_GET['uuf_skipped'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$preview['skipped'] = (int) $_GET['uuf_skipped']; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		}
 		?>
 		<div class="notice notice-info">
 			<p>
 				<?php
 				printf(
-					/* translators: 1: changed count 2: skipped count */
-					esc_html__( 'Dry-run completed. Changed: %1$d. Skipped: %2$d.', 'url-usage-finder' ),
+					/* translators: 1: changed row count 2: replacement count 3: skipped row count */
+					esc_html__( 'Dry-run completed. Changed rows: %1$d. URL occurrences to replace: %2$d. Skipped rows: %3$d.', 'url-usage-finder' ),
 					isset( $preview['changed'] ) ? (int) $preview['changed'] : 0,
+					isset( $preview['replacements'] ) ? (int) $preview['replacements'] : 0,
 					isset( $preview['skipped'] ) ? (int) $preview['skipped'] : 0
 				);
 				?>
@@ -682,6 +802,7 @@ class URL_Usage_Finder_Admin {
 				<th><?php echo esc_html__( 'Source', 'url-usage-finder' ); ?></th>
 				<th><?php echo esc_html__( 'Object', 'url-usage-finder' ); ?></th>
 				<th><?php echo esc_html__( 'Field', 'url-usage-finder' ); ?></th>
+				<th><?php echo esc_html__( 'Occurrences', 'url-usage-finder' ); ?></th>
 				<th><?php echo esc_html__( 'Before', 'url-usage-finder' ); ?></th>
 				<th><?php echo esc_html__( 'After', 'url-usage-finder' ); ?></th>
 			</tr>
@@ -692,6 +813,7 @@ class URL_Usage_Finder_Admin {
 					<td><?php echo esc_html( isset( $item['source'] ) ? (string) $item['source'] : '' ); ?></td>
 					<td><?php echo esc_html( isset( $item['object_label'] ) ? (string) $item['object_label'] : '' ); ?></td>
 					<td><?php echo esc_html( isset( $item['field'] ) ? (string) $item['field'] : '' ); ?></td>
+					<td><?php echo esc_html( isset( $item['replacements'] ) ? (string) (int) $item['replacements'] : '0' ); ?></td>
 					<td><code><?php echo esc_html( isset( $item['before'] ) ? (string) $item['before'] : '' ); ?></code></td>
 					<td><code><?php echo esc_html( isset( $item['after'] ) ? (string) $item['after'] : '' ); ?></code></td>
 				</tr>

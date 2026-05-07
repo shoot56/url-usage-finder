@@ -83,6 +83,7 @@ class URL_Usage_Finder_Scanner {
 			"SELECT ID, post_title, post_type, post_content
 			FROM {$wpdb->posts}
 			WHERE post_status NOT IN ('auto-draft','trash')
+			  AND post_type <> 'revision'
 			  AND ({$like_sql['where']})",
 			$like_sql['values']
 		);
@@ -92,7 +93,11 @@ class URL_Usage_Finder_Scanner {
 		$this->record_source_debug( 'post_content', $rows );
 
 		foreach ( $rows as $row ) {
-			$matched_needle = $this->find_matching_needle( $row['post_content'], $needles );
+			$matches        = $this->find_matches( $row['post_content'], $needles );
+			if ( empty( $matches ) ) {
+				continue;
+			}
+			$matched_needle = $this->get_first_matched_url( $matches );
 			$results[] = array(
 				'source'       => 'post_content',
 				'object_type'  => 'post',
@@ -102,7 +107,10 @@ class URL_Usage_Finder_Scanner {
 				'context'      => $this->extract_context( $row['post_content'], $matched_needle ),
 				'element_hint' => $this->detect_element_hint( $row['post_content'], $matched_needle ),
 				'matched_url'  => $matched_needle,
+				'matched_urls' => $this->get_unique_matched_urls( $matches ),
+				'occurrences'  => count( $matches ),
 				'edit_link'    => get_edit_post_link( (int) $row['ID'], 'raw' ),
+				'view_link'    => get_permalink( (int) $row['ID'] ),
 			);
 		}
 
@@ -117,6 +125,7 @@ class URL_Usage_Finder_Scanner {
 			"SELECT ID, post_title, post_type, post_excerpt
 			FROM {$wpdb->posts}
 			WHERE post_status NOT IN ('auto-draft','trash')
+			  AND post_type <> 'revision'
 			  AND ({$like_sql['where']})",
 			$like_sql['values']
 		);
@@ -126,7 +135,11 @@ class URL_Usage_Finder_Scanner {
 		$this->record_source_debug( 'post_excerpt', $rows );
 
 		foreach ( $rows as $row ) {
-			$matched_needle = $this->find_matching_needle( $row['post_excerpt'], $needles );
+			$matches        = $this->find_matches( $row['post_excerpt'], $needles );
+			if ( empty( $matches ) ) {
+				continue;
+			}
+			$matched_needle = $this->get_first_matched_url( $matches );
 			$results[] = array(
 				'source'       => 'post_excerpt',
 				'object_type'  => 'post',
@@ -136,7 +149,10 @@ class URL_Usage_Finder_Scanner {
 				'context'      => $this->extract_context( $row['post_excerpt'], $matched_needle ),
 				'element_hint' => 'raw_text',
 				'matched_url'  => $matched_needle,
+				'matched_urls' => $this->get_unique_matched_urls( $matches ),
+				'occurrences'  => count( $matches ),
 				'edit_link'    => get_edit_post_link( (int) $row['ID'], 'raw' ),
+				'view_link'    => get_permalink( (int) $row['ID'] ),
 			);
 		}
 
@@ -152,6 +168,7 @@ class URL_Usage_Finder_Scanner {
 			FROM {$wpdb->postmeta} pm
 			INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
 			WHERE p.post_status NOT IN ('auto-draft','trash')
+			  AND p.post_type <> 'revision'
 			  AND ({$like_sql['where']})",
 			$like_sql['values']
 		);
@@ -162,7 +179,11 @@ class URL_Usage_Finder_Scanner {
 
 		foreach ( $rows as $row ) {
 			$meta_value     = $this->stringify_value( maybe_unserialize( $row['meta_value'] ) );
-			$matched_needle = $this->find_matching_needle( $meta_value, $needles );
+			$matches        = $this->find_matches( $meta_value, $needles );
+			if ( empty( $matches ) ) {
+				continue;
+			}
+			$matched_needle = $this->get_first_matched_url( $matches );
 			$results[]      = array(
 				'source'       => 'post_meta',
 				'object_type'  => 'post_meta',
@@ -173,7 +194,10 @@ class URL_Usage_Finder_Scanner {
 				'context'      => $this->extract_context( $meta_value, $matched_needle ),
 				'element_hint' => $this->detect_element_hint( $meta_value, $matched_needle ),
 				'matched_url'  => $matched_needle,
+				'matched_urls' => $this->get_unique_matched_urls( $matches ),
+				'occurrences'  => count( $matches ),
 				'edit_link'    => get_edit_post_link( (int) $row['post_id'], 'raw' ),
+				'view_link'    => get_permalink( (int) $row['post_id'] ),
 			);
 		}
 
@@ -200,7 +224,11 @@ class URL_Usage_Finder_Scanner {
 
 		foreach ( $rows as $row ) {
 			$meta_value     = $this->stringify_value( maybe_unserialize( $row['meta_value'] ) );
-			$matched_needle = $this->find_matching_needle( $meta_value, $needles );
+			$matches        = $this->find_matches( $meta_value, $needles );
+			if ( empty( $matches ) ) {
+				continue;
+			}
+			$matched_needle = $this->get_first_matched_url( $matches );
 			$results[]      = array(
 				'source'       => 'menus',
 				'object_type'  => 'menu_item',
@@ -211,7 +239,10 @@ class URL_Usage_Finder_Scanner {
 				'context'      => $this->extract_context( $meta_value, $matched_needle ),
 				'element_hint' => $this->detect_element_hint( $meta_value, $matched_needle ),
 				'matched_url'  => $matched_needle,
+				'matched_urls' => $this->get_unique_matched_urls( $matches ),
+				'occurrences'  => count( $matches ),
 				'edit_link'    => admin_url( 'nav-menus.php' ),
+				'view_link'    => null,
 			);
 		}
 
@@ -240,7 +271,11 @@ class URL_Usage_Finder_Scanner {
 
 		foreach ( $rows as $row ) {
 			$option_value   = $this->stringify_value( maybe_unserialize( $row['option_value'] ) );
-			$matched_needle = $this->find_matching_needle( $option_value, $needles );
+			$matches        = $this->find_matches( $option_value, $needles );
+			if ( empty( $matches ) ) {
+				continue;
+			}
+			$matched_needle = $this->get_first_matched_url( $matches );
 			$results[]      = array(
 				'source'       => 'options',
 				'object_type'  => 'option',
@@ -250,7 +285,10 @@ class URL_Usage_Finder_Scanner {
 				'context'      => $this->extract_context( $option_value, $matched_needle ),
 				'element_hint' => $this->detect_element_hint( $option_value, $matched_needle ),
 				'matched_url'  => $matched_needle,
+				'matched_urls' => $this->get_unique_matched_urls( $matches ),
+				'occurrences'  => count( $matches ),
 				'edit_link'    => null,
+				'view_link'    => null,
 			);
 		}
 
@@ -385,18 +423,110 @@ class URL_Usage_Finder_Scanner {
 		return $expanded;
 	}
 
-	private function find_matching_needle( $content, $needles ) {
+	private function find_matches( $content, $needles ) {
 		if ( ! is_string( $content ) || '' === $content ) {
-			return '';
+			return array();
 		}
 
+		$needles = array_values( array_unique( array_filter( (array) $needles, 'strlen' ) ) );
+		usort(
+			$needles,
+			static function ( $a, $b ) {
+				return strlen( $b ) <=> strlen( $a );
+			}
+		);
+
+		$candidates = array();
 		foreach ( $needles as $needle ) {
-			if ( '' !== $needle && false !== strpos( $content, $needle ) ) {
-				return $needle;
+			$offset = 0;
+			while ( false !== ( $position = strpos( $content, $needle, $offset ) ) ) {
+				if ( $this->has_valid_url_boundary( $content, $needle, $position ) ) {
+					$candidates[] = array(
+						'needle'   => $needle,
+						'position' => $position,
+						'length'   => strlen( $needle ),
+					);
+				}
+				$offset = $position + 1;
 			}
 		}
 
-		return '';
+		usort(
+			$candidates,
+			static function ( $a, $b ) {
+				if ( $a['position'] === $b['position'] ) {
+					return $b['length'] <=> $a['length'];
+				}
+
+				return $a['position'] <=> $b['position'];
+			}
+		);
+
+		$matches = array();
+		foreach ( $candidates as $candidate ) {
+			if ( $this->overlaps_existing_match( $candidate, $matches ) ) {
+				continue;
+			}
+
+			$matches[] = $candidate;
+		}
+
+		usort(
+			$matches,
+			static function ( $a, $b ) {
+				return $a['position'] <=> $b['position'];
+			}
+		);
+
+		return $matches;
+	}
+
+	private function has_valid_url_boundary( $content, $needle, $position ) {
+		$last_char = substr( $needle, -1 );
+		if ( in_array( $last_char, array( '/', '\\', '?', '#', '&', '=' ), true ) ) {
+			return true;
+		}
+
+		$next_char_position = $position + strlen( $needle );
+		if ( $next_char_position >= strlen( $content ) ) {
+			return true;
+		}
+
+		$next_char = $content[ $next_char_position ];
+
+		return ! preg_match( '/[A-Za-z0-9._~-]/', $next_char );
+	}
+
+	private function overlaps_existing_match( $candidate, $matches ) {
+		$candidate_start = (int) $candidate['position'];
+		$candidate_end   = $candidate_start + (int) $candidate['length'];
+
+		foreach ( $matches as $match ) {
+			$match_start = (int) $match['position'];
+			$match_end   = $match_start + (int) $match['length'];
+
+			if ( $candidate_start < $match_end && $candidate_end > $match_start ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private function get_first_matched_url( $matches ) {
+		return isset( $matches[0]['needle'] ) ? (string) $matches[0]['needle'] : '';
+	}
+
+	private function get_unique_matched_urls( $matches ) {
+		$urls = array();
+
+		foreach ( $matches as $match ) {
+			if ( ! empty( $match['needle'] ) ) {
+				$urls[] = (string) $match['needle'];
+			}
+		}
+
+		return array_values( array_unique( $urls ) );
 	}
 
 	private function build_post_label( $row ) {
@@ -420,14 +550,23 @@ class URL_Usage_Finder_Scanner {
 
 		$position = strpos( $content, $needle );
 		if ( false === $position ) {
-			return mb_substr( wp_strip_all_tags( $content ), 0, 220 );
+			return $this->normalize_context( substr( $content, 0, 220 ) );
 		}
 
 		$start = max( 0, $position - 80 );
 		$len   = strlen( $needle ) + 160;
 		$raw   = substr( $content, $start, $len );
+		$prefix = $start > 0 ? '...' : '';
+		$suffix = ( $start + $len ) < strlen( $content ) ? '...' : '';
 
-		return trim( wp_strip_all_tags( $raw ) );
+		return $prefix . $this->normalize_context( $raw ) . $suffix;
+	}
+
+	private function normalize_context( $context ) {
+		$context = html_entity_decode( (string) $context, ENT_QUOTES, get_bloginfo( 'charset' ) );
+		$context = preg_replace( '/\s+/', ' ', $context );
+
+		return trim( (string) $context );
 	}
 
 	private function detect_element_hint( $content, $needle ) {

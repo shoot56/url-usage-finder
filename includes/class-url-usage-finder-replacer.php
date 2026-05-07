@@ -21,15 +21,17 @@ class URL_Usage_Finder_Replacer {
 	 */
 	public function replace_selected( $old_url, $new_url, $rows ) {
 		$summary = array(
-			'updated' => 0,
-			'skipped' => 0,
-			'errors'  => array(),
+			'updated'      => 0,
+			'replacements' => 0,
+			'skipped'      => 0,
+			'errors'       => array(),
 		);
 
 		foreach ( $rows as $row ) {
 			$updated = $this->replace_single( $old_url, $new_url, $row );
-			if ( true === $updated ) {
+			if ( is_int( $updated ) && $updated > 0 ) {
 				++$summary['updated'];
+				$summary['replacements'] += $updated;
 			} elseif ( false === $updated ) {
 				++$summary['skipped'];
 			} else {
@@ -50,10 +52,11 @@ class URL_Usage_Finder_Replacer {
 	 */
 	public function preview_selected( $old_url, $new_url, $rows ) {
 		$summary = array(
-			'changed' => 0,
-			'skipped' => 0,
-			'errors'  => array(),
-			'items'   => array(),
+			'changed'      => 0,
+			'replacements' => 0,
+			'skipped'      => 0,
+			'errors'       => array(),
+			'items'        => array(),
 		);
 
 		foreach ( $rows as $row ) {
@@ -69,6 +72,7 @@ class URL_Usage_Finder_Replacer {
 			}
 
 			++$summary['changed'];
+			$summary['replacements'] += isset( $preview['replacements'] ) ? (int) $preview['replacements'] : 0;
 			$summary['items'][] = $preview;
 		}
 
@@ -137,15 +141,18 @@ class URL_Usage_Finder_Replacer {
 			return array( 'changed' => false );
 		}
 
-		$matched_old_url = $this->get_matched_url( $old_url, $row );
-		$next            = str_replace( $matched_old_url, $new_url, $current );
+		$matched_old_urls  = $this->get_matched_urls( $old_url, $row );
+		$replacement_count = 0;
+		$next              = $this->replace_string_matches( $current, $matched_old_urls, $new_url, $replacement_count );
+		$first_old_url     = isset( $matched_old_urls[0] ) ? (string) $matched_old_urls[0] : $old_url;
 
 		return array(
 			'changed'      => $next !== $current,
+			'replacements' => $replacement_count,
 			'source'       => isset( $row['source'] ) ? (string) $row['source'] : '',
 			'object_label' => isset( $row['object_label'] ) ? (string) $row['object_label'] : '',
 			'field'        => isset( $row['field'] ) ? (string) $row['field'] : '',
-			'before'       => $this->context_for_preview( $current, $matched_old_url ),
+			'before'       => $this->context_for_preview( $current, $first_old_url ),
 			'after'        => $this->context_for_preview( $next, $new_url ),
 		);
 	}
@@ -178,9 +185,9 @@ class URL_Usage_Finder_Replacer {
 			return 'Post not found: ' . $post_id;
 		}
 
-		$matched_old_url = $this->get_matched_url( $old_url, $row );
-		$current         = (string) $post->{$field};
-		$next            = str_replace( $matched_old_url, $new_url, $current );
+		$replacement_count = 0;
+		$current           = (string) $post->{$field};
+		$next              = $this->replace_string_matches( $current, $this->get_matched_urls( $old_url, $row ), $new_url, $replacement_count );
 		if ( $next === $current ) {
 			return false;
 		}
@@ -197,7 +204,7 @@ class URL_Usage_Finder_Replacer {
 			return $update->get_error_message();
 		}
 
-		return true;
+		return $replacement_count;
 	}
 
 	private function replace_in_post_meta( $old_url, $new_url, $row ) {
@@ -207,15 +214,16 @@ class URL_Usage_Finder_Replacer {
 			return false;
 		}
 
-		$current = get_post_meta( $post_id, $meta_key, true );
-		$next    = $this->recursive_replace( $current, $this->get_matched_url( $old_url, $row ), $new_url );
+		$replacement_count = 0;
+		$current           = get_post_meta( $post_id, $meta_key, true );
+		$next              = $this->recursive_replace( $current, $this->get_matched_urls( $old_url, $row ), $new_url, $replacement_count );
 
 		if ( $next === $current ) {
 			return false;
 		}
 
 		$updated = update_post_meta( $post_id, $meta_key, $next );
-		return false !== $updated;
+		return false !== $updated ? $replacement_count : false;
 	}
 
 	private function replace_in_option( $old_url, $new_url, $row ) {
@@ -224,33 +232,35 @@ class URL_Usage_Finder_Replacer {
 			return false;
 		}
 
-		$current = get_option( $option_name, null );
-		$next    = $this->recursive_replace( $current, $this->get_matched_url( $old_url, $row ), $new_url );
+		$replacement_count = 0;
+		$current           = get_option( $option_name, null );
+		$next              = $this->recursive_replace( $current, $this->get_matched_urls( $old_url, $row ), $new_url, $replacement_count );
 
 		if ( $next === $current ) {
 			return false;
 		}
 
 		$updated = update_option( $option_name, $next, false );
-		return false !== $updated;
+		return false !== $updated ? $replacement_count : false;
 	}
 
 	/**
 	 * Recursively replace URL in string/array/object.
 	 *
 	 * @param mixed  $value Value.
-	 * @param string $old_url Old URL.
+	 * @param array  $old_urls Old URL variants.
 	 * @param string $new_url New URL.
+	 * @param int    $replacement_count Replacement counter.
 	 * @return mixed
 	 */
-	private function recursive_replace( $value, $old_url, $new_url ) {
+	private function recursive_replace( $value, $old_urls, $new_url, &$replacement_count ) {
 		if ( is_string( $value ) ) {
-			return str_replace( $old_url, $new_url, $value );
+			return $this->replace_string_matches( $value, $old_urls, $new_url, $replacement_count );
 		}
 
 		if ( is_array( $value ) ) {
 			foreach ( $value as $key => $item ) {
-				$value[ $key ] = $this->recursive_replace( $item, $old_url, $new_url );
+				$value[ $key ] = $this->recursive_replace( $item, $old_urls, $new_url, $replacement_count );
 			}
 
 			return $value;
@@ -259,18 +269,68 @@ class URL_Usage_Finder_Replacer {
 		if ( is_object( $value ) ) {
 			$vars = get_object_vars( $value );
 			foreach ( $vars as $key => $item ) {
-				$value->{$key} = $this->recursive_replace( $item, $old_url, $new_url );
+				$value->{$key} = $this->recursive_replace( $item, $old_urls, $new_url, $replacement_count );
 			}
 		}
 
 		return $value;
 	}
 
-	private function get_matched_url( $old_url, $row ) {
-		if ( ! empty( $row['matched_url'] ) ) {
-			return (string) $row['matched_url'];
+	private function get_matched_urls( $old_url, $row ) {
+		if ( ! empty( $row['matched_urls'] ) && is_array( $row['matched_urls'] ) ) {
+			$urls = array_values( array_unique( array_filter( array_map( 'strval', $row['matched_urls'] ), 'strlen' ) ) );
+			if ( ! empty( $urls ) ) {
+				return $this->sort_urls_by_length( $urls );
+			}
 		}
 
-		return (string) $old_url;
+		if ( ! empty( $row['matched_url'] ) ) {
+			return array( (string) $row['matched_url'] );
+		}
+
+		return array( (string) $old_url );
+	}
+
+	private function sort_urls_by_length( $urls ) {
+		usort(
+			$urls,
+			static function ( $a, $b ) {
+				return strlen( $b ) <=> strlen( $a );
+			}
+		);
+
+		return $urls;
+	}
+
+	private function replace_string_matches( $content, $old_urls, $new_url, &$replacement_count ) {
+		$old_urls = $this->sort_urls_by_length( array_values( array_unique( array_filter( (array) $old_urls, 'strlen' ) ) ) );
+		if ( '' === $content || empty( $old_urls ) ) {
+			return $content;
+		}
+
+		$result = '';
+		$length = strlen( $content );
+
+		for ( $i = 0; $i < $length; ) {
+			$matched_url = '';
+			foreach ( $old_urls as $old_url ) {
+				if ( $i === strpos( $content, $old_url, $i ) ) {
+					$matched_url = $old_url;
+					break;
+				}
+			}
+
+			if ( '' !== $matched_url ) {
+				$result .= $new_url;
+				$i      += strlen( $matched_url );
+				++$replacement_count;
+				continue;
+			}
+
+			$result .= $content[ $i ];
+			++$i;
+		}
+
+		return $result;
 	}
 }
