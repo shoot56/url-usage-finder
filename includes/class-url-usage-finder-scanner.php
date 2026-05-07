@@ -12,6 +12,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 class URL_Usage_Finder_Scanner {
 
 	/**
+	 * Last search debug details.
+	 *
+	 * @var array<string, mixed>
+	 */
+	private $debug_info = array();
+
+	/**
 	 * Search for URL in selected sources.
 	 *
 	 * @param string $needle Target URL.
@@ -19,61 +26,82 @@ class URL_Usage_Finder_Scanner {
 	 * @return array<int, array<string, mixed>>
 	 */
 	public function search( $needle, $sources ) {
-		$results = array();
+		$results          = array();
+		$this->debug_info = array(
+			'input'   => is_string( $needle ) ? trim( $needle ) : '',
+			'needles' => array(),
+			'sources' => array(),
+			'total'   => 0,
+		);
 
 		if ( ! is_string( $needle ) || '' === trim( $needle ) ) {
 			return $results;
 		}
 
-		$needle = trim( $needle );
+		$needle  = trim( $needle );
+		$needles = $this->build_search_needles( $needle );
+		$this->debug_info['needles'] = $needles;
+
+		if ( empty( $needles ) ) {
+			return $results;
+		}
 
 		if ( ! empty( $sources['post_content'] ) ) {
-			$results = array_merge( $results, $this->search_post_content( $needle ) );
+			$results = array_merge( $results, $this->search_post_content( $needles ) );
 		}
 
 		if ( ! empty( $sources['post_excerpt'] ) ) {
-			$results = array_merge( $results, $this->search_post_excerpt( $needle ) );
+			$results = array_merge( $results, $this->search_post_excerpt( $needles ) );
 		}
 
 		if ( ! empty( $sources['post_meta'] ) ) {
-			$results = array_merge( $results, $this->search_post_meta( $needle ) );
+			$results = array_merge( $results, $this->search_post_meta( $needles ) );
 		}
 
 		if ( ! empty( $sources['menus'] ) ) {
-			$results = array_merge( $results, $this->search_menus( $needle ) );
+			$results = array_merge( $results, $this->search_menus( $needles ) );
 		}
 
 		if ( ! empty( $sources['options'] ) ) {
-			$results = array_merge( $results, $this->search_options( $needle ) );
+			$results = array_merge( $results, $this->search_options( $needles ) );
 		}
+
+		$this->debug_info['total'] = count( $results );
 
 		return $results;
 	}
 
-	private function search_post_content( $needle ) {
+	public function get_debug_info() {
+		return $this->debug_info;
+	}
+
+	private function search_post_content( $needles ) {
 		global $wpdb;
 
-		$like = '%' . $wpdb->esc_like( $needle ) . '%';
-		$sql  = $wpdb->prepare(
+		$like_sql = $this->build_like_sql( 'post_content', $needles );
+		$sql      = $this->prepare_sql(
 			"SELECT ID, post_title, post_type, post_content
 			FROM {$wpdb->posts}
 			WHERE post_status NOT IN ('auto-draft','trash')
-			  AND post_content LIKE %s",
-			$like
+			  AND ({$like_sql['where']})",
+			$like_sql['values']
 		);
 
 		$rows    = $wpdb->get_results( $sql, ARRAY_A );
 		$results = array();
+		$this->record_source_debug( 'post_content', $rows );
 
 		foreach ( $rows as $row ) {
+			$matched_needle = $this->find_matching_needle( $row['post_content'], $needles );
 			$results[] = array(
 				'source'       => 'post_content',
 				'object_type'  => 'post',
 				'object_id'    => (int) $row['ID'],
 				'object_label' => $this->build_post_label( $row ),
 				'field'        => 'post_content',
-				'context'      => $this->extract_context( $row['post_content'], $needle ),
-				'element_hint' => $this->detect_element_hint( $row['post_content'], $needle ),
+				'context'      => $this->extract_context( $row['post_content'], $matched_needle ),
+				'element_hint' => $this->detect_element_hint( $row['post_content'], $matched_needle ),
+				'matched_url'  => $matched_needle,
 				'edit_link'    => get_edit_post_link( (int) $row['ID'], 'raw' ),
 			);
 		}
@@ -81,30 +109,33 @@ class URL_Usage_Finder_Scanner {
 		return $results;
 	}
 
-	private function search_post_excerpt( $needle ) {
+	private function search_post_excerpt( $needles ) {
 		global $wpdb;
 
-		$like = '%' . $wpdb->esc_like( $needle ) . '%';
-		$sql  = $wpdb->prepare(
+		$like_sql = $this->build_like_sql( 'post_excerpt', $needles );
+		$sql      = $this->prepare_sql(
 			"SELECT ID, post_title, post_type, post_excerpt
 			FROM {$wpdb->posts}
 			WHERE post_status NOT IN ('auto-draft','trash')
-			  AND post_excerpt LIKE %s",
-			$like
+			  AND ({$like_sql['where']})",
+			$like_sql['values']
 		);
 
 		$rows    = $wpdb->get_results( $sql, ARRAY_A );
 		$results = array();
+		$this->record_source_debug( 'post_excerpt', $rows );
 
 		foreach ( $rows as $row ) {
+			$matched_needle = $this->find_matching_needle( $row['post_excerpt'], $needles );
 			$results[] = array(
 				'source'       => 'post_excerpt',
 				'object_type'  => 'post',
 				'object_id'    => (int) $row['ID'],
 				'object_label' => $this->build_post_label( $row ),
 				'field'        => 'post_excerpt',
-				'context'      => $this->extract_context( $row['post_excerpt'], $needle ),
+				'context'      => $this->extract_context( $row['post_excerpt'], $matched_needle ),
 				'element_hint' => 'raw_text',
+				'matched_url'  => $matched_needle,
 				'edit_link'    => get_edit_post_link( (int) $row['ID'], 'raw' ),
 			);
 		}
@@ -112,33 +143,36 @@ class URL_Usage_Finder_Scanner {
 		return $results;
 	}
 
-	private function search_post_meta( $needle ) {
+	private function search_post_meta( $needles ) {
 		global $wpdb;
 
-		$like = '%' . $wpdb->esc_like( $needle ) . '%';
-		$sql  = $wpdb->prepare(
+		$like_sql = $this->build_like_sql( 'pm.meta_value', $needles );
+		$sql      = $this->prepare_sql(
 			"SELECT pm.meta_id, pm.post_id, pm.meta_key, pm.meta_value, p.post_title, p.post_type
 			FROM {$wpdb->postmeta} pm
 			INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
 			WHERE p.post_status NOT IN ('auto-draft','trash')
-			  AND pm.meta_value LIKE %s",
-			$like
+			  AND ({$like_sql['where']})",
+			$like_sql['values']
 		);
 
 		$rows    = $wpdb->get_results( $sql, ARRAY_A );
 		$results = array();
+		$this->record_source_debug( 'post_meta', $rows );
 
 		foreach ( $rows as $row ) {
-			$meta_value = $this->stringify_value( maybe_unserialize( $row['meta_value'] ) );
-			$results[]  = array(
+			$meta_value     = $this->stringify_value( maybe_unserialize( $row['meta_value'] ) );
+			$matched_needle = $this->find_matching_needle( $meta_value, $needles );
+			$results[]      = array(
 				'source'       => 'post_meta',
 				'object_type'  => 'post_meta',
 				'object_id'    => (int) $row['meta_id'],
 				'object_label' => $this->build_post_label( $row ),
 				'post_id'      => (int) $row['post_id'],
 				'field'        => (string) $row['meta_key'],
-				'context'      => $this->extract_context( $meta_value, $needle ),
-				'element_hint' => $this->detect_element_hint( $meta_value, $needle ),
+				'context'      => $this->extract_context( $meta_value, $matched_needle ),
+				'element_hint' => $this->detect_element_hint( $meta_value, $matched_needle ),
+				'matched_url'  => $matched_needle,
 				'edit_link'    => get_edit_post_link( (int) $row['post_id'], 'raw' ),
 			);
 		}
@@ -146,34 +180,37 @@ class URL_Usage_Finder_Scanner {
 		return $results;
 	}
 
-	private function search_menus( $needle ) {
+	private function search_menus( $needles ) {
 		global $wpdb;
 
-		$like = '%' . $wpdb->esc_like( $needle ) . '%';
-		$sql  = $wpdb->prepare(
+		$like_sql = $this->build_like_sql( 'pm.meta_value', $needles );
+		$sql      = $this->prepare_sql(
 			"SELECT pm.meta_id, pm.post_id, pm.meta_key, pm.meta_value, p.post_title
 			FROM {$wpdb->postmeta} pm
 			INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
 			WHERE p.post_type = 'nav_menu_item'
 			  AND p.post_status NOT IN ('trash')
-			  AND pm.meta_value LIKE %s",
-			$like
+			  AND ({$like_sql['where']})",
+			$like_sql['values']
 		);
 
 		$rows    = $wpdb->get_results( $sql, ARRAY_A );
 		$results = array();
+		$this->record_source_debug( 'menus', $rows );
 
 		foreach ( $rows as $row ) {
-			$meta_value = $this->stringify_value( maybe_unserialize( $row['meta_value'] ) );
-			$results[]  = array(
+			$meta_value     = $this->stringify_value( maybe_unserialize( $row['meta_value'] ) );
+			$matched_needle = $this->find_matching_needle( $meta_value, $needles );
+			$results[]      = array(
 				'source'       => 'menus',
 				'object_type'  => 'menu_item',
 				'object_id'    => (int) $row['meta_id'],
 				'object_label' => sprintf( 'Menu item #%d', (int) $row['post_id'] ),
 				'post_id'      => (int) $row['post_id'],
 				'field'        => (string) $row['meta_key'],
-				'context'      => $this->extract_context( $meta_value, $needle ),
-				'element_hint' => $this->detect_element_hint( $meta_value, $needle ),
+				'context'      => $this->extract_context( $meta_value, $matched_needle ),
+				'element_hint' => $this->detect_element_hint( $meta_value, $matched_needle ),
+				'matched_url'  => $matched_needle,
 				'edit_link'    => admin_url( 'nav-menus.php' ),
 			);
 		}
@@ -181,39 +218,185 @@ class URL_Usage_Finder_Scanner {
 		return $results;
 	}
 
-	private function search_options( $needle ) {
+	private function search_options( $needles ) {
 		global $wpdb;
 
-		$like = '%' . $wpdb->esc_like( $needle ) . '%';
-		$sql  = $wpdb->prepare(
+		$like_sql = $this->build_like_sql( 'option_value', $needles );
+		$sql      = $this->prepare_sql(
 			"SELECT option_id, option_name, option_value
 			FROM {$wpdb->options}
 			WHERE option_name NOT LIKE %s
 			  AND option_name NOT LIKE %s
-			  AND option_value LIKE %s",
-			'_transient_%',
-			'_site_transient_%',
-			$like
+			  AND ({$like_sql['where']})",
+			array_merge(
+				array( '_transient_%', '_site_transient_%' ),
+				$like_sql['values']
+			)
 		);
 
 		$rows    = $wpdb->get_results( $sql, ARRAY_A );
 		$results = array();
+		$this->record_source_debug( 'options', $rows );
 
 		foreach ( $rows as $row ) {
-			$option_value = $this->stringify_value( maybe_unserialize( $row['option_value'] ) );
-			$results[]    = array(
+			$option_value   = $this->stringify_value( maybe_unserialize( $row['option_value'] ) );
+			$matched_needle = $this->find_matching_needle( $option_value, $needles );
+			$results[]      = array(
 				'source'       => 'options',
 				'object_type'  => 'option',
 				'object_id'    => (int) $row['option_id'],
 				'object_label' => (string) $row['option_name'],
 				'field'        => 'option_value',
-				'context'      => $this->extract_context( $option_value, $needle ),
-				'element_hint' => $this->detect_element_hint( $option_value, $needle ),
+				'context'      => $this->extract_context( $option_value, $matched_needle ),
+				'element_hint' => $this->detect_element_hint( $option_value, $matched_needle ),
+				'matched_url'  => $matched_needle,
 				'edit_link'    => null,
 			);
 		}
 
 		return $results;
+	}
+
+	private function record_source_debug( $source, $rows ) {
+		global $wpdb;
+
+		$this->debug_info['sources'][ $source ] = array(
+			'rows'       => is_array( $rows ) ? count( $rows ) : 0,
+			'last_error' => isset( $wpdb->last_error ) ? (string) $wpdb->last_error : '',
+		);
+	}
+
+	private function build_like_sql( $column, $needles ) {
+		global $wpdb;
+
+		$where  = array();
+		$values = array();
+
+		foreach ( $needles as $needle ) {
+			$where[]  = $column . ' LIKE %s';
+			$values[] = '%' . $wpdb->esc_like( $needle ) . '%';
+		}
+
+		return array(
+			'where'  => implode( ' OR ', $where ),
+			'values' => $values,
+		);
+	}
+
+	private function prepare_sql( $query, $values ) {
+		global $wpdb;
+
+		return call_user_func_array( array( $wpdb, 'prepare' ), array_merge( array( $query ), $values ) );
+	}
+
+	private function build_search_needles( $needle ) {
+		$needle = trim( html_entity_decode( (string) $needle, ENT_QUOTES, get_bloginfo( 'charset' ) ) );
+		if ( '' === $needle ) {
+			return array();
+		}
+
+		$variants = array( $needle );
+		$decoded  = rawurldecode( $needle );
+		if ( $decoded !== $needle ) {
+			$variants[] = $decoded;
+		}
+
+		$parts = $this->parse_url_input( $needle );
+		if ( ! empty( $parts ) ) {
+			$host = isset( $parts['host'] ) ? (string) $parts['host'] : '';
+			$path = isset( $parts['path'] ) ? (string) $parts['path'] : '';
+
+			if ( isset( $parts['port'] ) ) {
+				$host .= ':' . (int) $parts['port'];
+			}
+
+			$suffix = $path;
+			if ( isset( $parts['query'] ) && '' !== $parts['query'] ) {
+				$suffix .= '?' . $parts['query'];
+			}
+			if ( isset( $parts['fragment'] ) && '' !== $parts['fragment'] ) {
+				$suffix .= '#' . $parts['fragment'];
+			}
+
+			if ( '' !== $host ) {
+				$variants[] = 'https://' . $host . $suffix;
+				$variants[] = 'http://' . $host . $suffix;
+				$variants[] = '//' . $host . $suffix;
+				$variants[] = $host . $suffix;
+			}
+
+			if ( '' !== $suffix && '/' !== $suffix ) {
+				$variants[] = $suffix;
+			}
+		}
+
+		$variants = $this->add_trailing_slash_variants( $variants );
+		$variants = $this->add_json_escaped_variants( $variants );
+
+		return array_values( array_unique( array_filter( $variants, 'strlen' ) ) );
+	}
+
+	private function parse_url_input( $needle ) {
+		$value = trim( (string) $needle );
+		if ( '' === $value ) {
+			return array();
+		}
+
+		if ( 0 === strpos( $value, '//' ) ) {
+			$value = 'https:' . $value;
+		} elseif ( ! preg_match( '#^[a-z][a-z0-9+\-.]*://#i', $value ) && 0 !== strpos( $value, '/' ) && preg_match( '#^[^/?#]+\.[^/?#]+#', $value ) ) {
+			$value = 'https://' . $value;
+		}
+
+		$parts = wp_parse_url( $value );
+		return is_array( $parts ) ? $parts : array();
+	}
+
+	private function add_trailing_slash_variants( $variants ) {
+		$expanded = array();
+
+		foreach ( $variants as $variant ) {
+			$expanded[] = $variant;
+
+			$split_at = strcspn( $variant, '?#' );
+			$base     = substr( $variant, 0, $split_at );
+			$suffix   = substr( $variant, $split_at );
+
+			if ( '' === $base || '/' === $base ) {
+				continue;
+			}
+
+			$expanded[] = untrailingslashit( $base ) . $suffix;
+			$expanded[] = trailingslashit( untrailingslashit( $base ) ) . $suffix;
+		}
+
+		return $expanded;
+	}
+
+	private function add_json_escaped_variants( $variants ) {
+		$expanded = $variants;
+
+		foreach ( $variants as $variant ) {
+			if ( false !== strpos( $variant, '/' ) ) {
+				$expanded[] = str_replace( '/', '\/', $variant );
+			}
+		}
+
+		return $expanded;
+	}
+
+	private function find_matching_needle( $content, $needles ) {
+		if ( ! is_string( $content ) || '' === $content ) {
+			return '';
+		}
+
+		foreach ( $needles as $needle ) {
+			if ( '' !== $needle && false !== strpos( $content, $needle ) ) {
+				return $needle;
+			}
+		}
+
+		return '';
 	}
 
 	private function build_post_label( $row ) {

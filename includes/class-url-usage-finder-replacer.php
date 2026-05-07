@@ -137,14 +137,15 @@ class URL_Usage_Finder_Replacer {
 			return array( 'changed' => false );
 		}
 
-		$next = str_replace( $old_url, $new_url, $current );
+		$matched_old_url = $this->get_matched_url( $old_url, $row );
+		$next            = str_replace( $matched_old_url, $new_url, $current );
 
 		return array(
 			'changed'      => $next !== $current,
 			'source'       => isset( $row['source'] ) ? (string) $row['source'] : '',
 			'object_label' => isset( $row['object_label'] ) ? (string) $row['object_label'] : '',
 			'field'        => isset( $row['field'] ) ? (string) $row['field'] : '',
-			'before'       => $this->context_for_preview( $current, $old_url ),
+			'before'       => $this->context_for_preview( $current, $matched_old_url ),
 			'after'        => $this->context_for_preview( $next, $new_url ),
 		);
 	}
@@ -177,8 +178,9 @@ class URL_Usage_Finder_Replacer {
 			return 'Post not found: ' . $post_id;
 		}
 
-		$current = (string) $post->{$field};
-		$next    = str_replace( $old_url, $new_url, $current );
+		$matched_old_url = $this->get_matched_url( $old_url, $row );
+		$current         = (string) $post->{$field};
+		$next            = str_replace( $matched_old_url, $new_url, $current );
 		if ( $next === $current ) {
 			return false;
 		}
@@ -206,7 +208,7 @@ class URL_Usage_Finder_Replacer {
 		}
 
 		$current = get_post_meta( $post_id, $meta_key, true );
-		$next    = $this->recursive_replace( $current, $old_url, $new_url );
+		$next    = $this->recursive_replace( $current, $this->get_matched_url( $old_url, $row ), $new_url );
 
 		if ( $next === $current ) {
 			return false;
@@ -223,7 +225,7 @@ class URL_Usage_Finder_Replacer {
 		}
 
 		$current = get_option( $option_name, null );
-		$next    = $this->recursive_replace( $current, $old_url, $new_url );
+		$next    = $this->recursive_replace( $current, $this->get_matched_url( $old_url, $row ), $new_url );
 
 		if ( $next === $current ) {
 			return false;
@@ -262,5 +264,13 @@ class URL_Usage_Finder_Replacer {
 		}
 
 		return $value;
+	}
+
+	private function get_matched_url( $old_url, $row ) {
+		if ( ! empty( $row['matched_url'] ) ) {
+			return (string) $row['matched_url'];
+		}
+
+		return (string) $old_url;
 	}
 }
