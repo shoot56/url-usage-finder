@@ -28,14 +28,21 @@ class URL_Usage_Finder_Replacer {
 		);
 
 		foreach ( $rows as $row ) {
-			$updated = $this->replace_single( $old_url, $new_url, $row );
-			if ( is_int( $updated ) && $updated > 0 ) {
+			$result = $this->process_row( $old_url, $new_url, $row, true );
+			if ( ! empty( $result['error'] ) ) {
+				$summary['errors'][] = (string) $result['error'];
+				continue;
+			}
+
+			if ( empty( $result['changed'] ) ) {
+				++$summary['skipped'];
+				continue;
+			}
+
+			$updated = isset( $result['replacements'] ) ? (int) $result['replacements'] : 0;
+			if ( $updated > 0 ) {
 				++$summary['updated'];
 				$summary['replacements'] += $updated;
-			} elseif ( false === $updated ) {
-				++$summary['skipped'];
-			} else {
-				$summary['errors'][] = (string) $updated;
 			}
 		}
 
@@ -60,8 +67,8 @@ class URL_Usage_Finder_Replacer {
 		);
 
 		foreach ( $rows as $row ) {
-			$preview = $this->preview_single( $old_url, $new_url, $row );
-			if ( isset( $preview['error'] ) ) {
+			$preview = $this->process_row( $old_url, $new_url, $row, false );
+			if ( ! empty( $preview['error'] ) ) {
 				$summary['errors'][] = (string) $preview['error'];
 				continue;
 			}
@@ -79,81 +86,23 @@ class URL_Usage_Finder_Replacer {
 		return $summary;
 	}
 
-	/**
-	 * @param string                   $old_url Old URL.
-	 * @param string                   $new_url New URL.
-	 * @param array<string, mixed>     $row Result row.
-	 * @return bool|string
-	 */
-	private function replace_single( $old_url, $new_url, $row ) {
+	private function process_row( $old_url, $new_url, $row, $apply ) {
 		$source = isset( $row['source'] ) ? (string) $row['source'] : '';
 
 		if ( 'post_content' === $source || 'post_excerpt' === $source ) {
-			return $this->replace_in_post_field( $old_url, $new_url, $row );
+			return $this->process_post_field( $old_url, $new_url, $row, $apply );
 		}
 
 		if ( 'post_meta' === $source || 'menus' === $source ) {
-			return $this->replace_in_post_meta( $old_url, $new_url, $row );
+			return $this->process_post_meta( $old_url, $new_url, $row, $apply );
 		}
 
 		if ( 'options' === $source ) {
-			return $this->replace_in_option( $old_url, $new_url, $row );
+			return $this->process_option( $old_url, $new_url, $row, $apply );
 		}
-
-		return false;
-	}
-
-	/**
-	 * @param string               $old_url Old URL.
-	 * @param string               $new_url New URL.
-	 * @param array<string, mixed> $row Result row.
-	 * @return array<string, mixed>
-	 */
-	private function preview_single( $old_url, $new_url, $row ) {
-		$source  = isset( $row['source'] ) ? (string) $row['source'] : '';
-		$current = '';
-
-		if ( 'post_content' === $source || 'post_excerpt' === $source ) {
-			$post_id = isset( $row['object_id'] ) ? (int) $row['object_id'] : 0;
-			$field   = isset( $row['field'] ) ? (string) $row['field'] : 'post_content';
-			$post    = get_post( $post_id );
-			if ( ! $post || ! isset( $post->{$field} ) ) {
-				return array( 'error' => 'Preview failed: post not found' );
-			}
-
-			$current = (string) $post->{$field};
-		} elseif ( 'post_meta' === $source || 'menus' === $source ) {
-			$post_id  = isset( $row['post_id'] ) ? (int) $row['post_id'] : 0;
-			$meta_key = isset( $row['field'] ) ? (string) $row['field'] : '';
-			if ( $post_id <= 0 || '' === $meta_key ) {
-				return array( 'error' => 'Preview failed: invalid post meta target' );
-			}
-			$current = (string) wp_json_encode( get_post_meta( $post_id, $meta_key, true ), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
-		} elseif ( 'options' === $source ) {
-			$option_name = isset( $row['object_label'] ) ? (string) $row['object_label'] : '';
-			if ( '' === $option_name ) {
-				return array( 'error' => 'Preview failed: invalid option name' );
-			}
-			$current = (string) wp_json_encode( get_option( $option_name, null ), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
-		}
-
-		if ( '' === $current ) {
-			return array( 'changed' => false );
-		}
-
-		$matched_old_urls  = $this->get_matched_urls( $old_url, $row );
-		$replacement_count = 0;
-		$next              = $this->replace_string_matches( $current, $matched_old_urls, $new_url, $replacement_count );
-		$first_old_url     = isset( $matched_old_urls[0] ) ? (string) $matched_old_urls[0] : $old_url;
 
 		return array(
-			'changed'      => $next !== $current,
-			'replacements' => $replacement_count,
-			'source'       => isset( $row['source'] ) ? (string) $row['source'] : '',
-			'object_label' => isset( $row['object_label'] ) ? (string) $row['object_label'] : '',
-			'field'        => isset( $row['field'] ) ? (string) $row['field'] : '',
-			'before'       => $this->context_for_preview( $current, $first_old_url ),
-			'after'        => $this->context_for_preview( $next, $new_url ),
+			'changed' => false,
 		);
 	}
 
@@ -173,75 +122,114 @@ class URL_Usage_Finder_Replacer {
 		return trim( wp_strip_all_tags( substr( $content, $start, $len ) ) );
 	}
 
-	private function replace_in_post_field( $old_url, $new_url, $row ) {
+	private function process_post_field( $old_url, $new_url, $row, $apply ) {
 		$post_id = isset( $row['object_id'] ) ? (int) $row['object_id'] : 0;
 		$field   = isset( $row['field'] ) ? (string) $row['field'] : 'post_content';
 		if ( $post_id <= 0 || ! in_array( $field, array( 'post_content', 'post_excerpt' ), true ) ) {
-			return false;
+			return array( 'changed' => false );
 		}
 
 		$post = get_post( $post_id );
 		if ( ! $post ) {
-			return 'Post not found: ' . $post_id;
+			return array( 'error' => 'Post not found: ' . $post_id );
 		}
 
+		$needles           = $this->get_matched_urls( $old_url, $row );
 		$replacement_count = 0;
 		$current           = (string) $post->{$field};
-		$next              = $this->replace_string_matches( $current, $this->get_matched_urls( $old_url, $row ), $new_url, $replacement_count );
-		if ( $next === $current ) {
-			return false;
+		$next              = URL_Usage_Finder_Matcher::replace_matches( $current, $needles, $new_url, $replacement_count );
+
+		$result = $this->build_result_payload(
+			$row,
+			$current,
+			$next,
+			$needles,
+			$new_url,
+			$replacement_count
+		);
+		if ( empty( $result['changed'] ) || ! $apply ) {
+			return $result;
 		}
 
 		$update = wp_update_post(
 			array(
-				'ID'    => $post_id,
-				$field  => $next,
+				'ID'   => $post_id,
+				$field => $next,
 			),
 			true
 		);
 
 		if ( is_wp_error( $update ) ) {
-			return $update->get_error_message();
+			$result['error'] = $update->get_error_message();
+			$result['changed'] = false;
 		}
 
-		return $replacement_count;
+		return $result;
 	}
 
-	private function replace_in_post_meta( $old_url, $new_url, $row ) {
+	private function process_post_meta( $old_url, $new_url, $row, $apply ) {
 		$post_id  = isset( $row['post_id'] ) ? (int) $row['post_id'] : 0;
 		$meta_key = isset( $row['field'] ) ? (string) $row['field'] : '';
 		if ( $post_id <= 0 || '' === $meta_key ) {
-			return false;
+			return array( 'changed' => false );
 		}
 
+		$needles           = $this->get_matched_urls( $old_url, $row );
 		$replacement_count = 0;
 		$current           = get_post_meta( $post_id, $meta_key, true );
-		$next              = $this->recursive_replace( $current, $this->get_matched_urls( $old_url, $row ), $new_url, $replacement_count );
+		$next              = $this->recursive_replace( $current, $needles, $new_url, $replacement_count );
 
-		if ( $next === $current ) {
-			return false;
+		$result = $this->build_result_payload(
+			$row,
+			$this->stringify_value( $current ),
+			$this->stringify_value( $next ),
+			$needles,
+			$new_url,
+			$replacement_count
+		);
+		if ( empty( $result['changed'] ) || ! $apply ) {
+			return $result;
 		}
 
 		$updated = update_post_meta( $post_id, $meta_key, $next );
-		return false !== $updated ? $replacement_count : false;
-	}
-
-	private function replace_in_option( $old_url, $new_url, $row ) {
-		$option_name = isset( $row['object_label'] ) ? (string) $row['object_label'] : '';
-		if ( '' === $option_name ) {
-			return false;
+		if ( false === $updated ) {
+			$result['error'] = 'Failed to update post meta.';
+			$result['changed'] = false;
 		}
 
+		return $result;
+	}
+
+	private function process_option( $old_url, $new_url, $row, $apply ) {
+		$option_name = isset( $row['object_label'] ) ? (string) $row['object_label'] : '';
+		if ( '' === $option_name ) {
+			return array( 'changed' => false );
+		}
+
+		$needles           = $this->get_matched_urls( $old_url, $row );
 		$replacement_count = 0;
 		$current           = get_option( $option_name, null );
-		$next              = $this->recursive_replace( $current, $this->get_matched_urls( $old_url, $row ), $new_url, $replacement_count );
+		$next              = $this->recursive_replace( $current, $needles, $new_url, $replacement_count );
 
-		if ( $next === $current ) {
-			return false;
+		$result = $this->build_result_payload(
+			$row,
+			$this->stringify_value( $current ),
+			$this->stringify_value( $next ),
+			$needles,
+			$new_url,
+			$replacement_count
+		);
+		if ( empty( $result['changed'] ) || ! $apply ) {
+			return $result;
 		}
 
 		$updated = update_option( $option_name, $next, false );
-		return false !== $updated ? $replacement_count : false;
+		if ( false === $updated ) {
+			$result['error'] = 'Failed to update option.';
+			$result['changed'] = false;
+		}
+
+		return $result;
 	}
 
 	/**
@@ -255,7 +243,7 @@ class URL_Usage_Finder_Replacer {
 	 */
 	private function recursive_replace( $value, $old_urls, $new_url, &$replacement_count ) {
 		if ( is_string( $value ) ) {
-			return $this->replace_string_matches( $value, $old_urls, $new_url, $replacement_count );
+			return URL_Usage_Finder_Matcher::replace_matches( $value, $old_urls, $new_url, $replacement_count );
 		}
 
 		if ( is_array( $value ) ) {
@@ -302,35 +290,25 @@ class URL_Usage_Finder_Replacer {
 		return $urls;
 	}
 
-	private function replace_string_matches( $content, $old_urls, $new_url, &$replacement_count ) {
-		$old_urls = $this->sort_urls_by_length( array_values( array_unique( array_filter( (array) $old_urls, 'strlen' ) ) ) );
-		if ( '' === $content || empty( $old_urls ) ) {
-			return $content;
+	private function build_result_payload( $row, $before_content, $after_content, $needles, $new_url, $replacement_count ) {
+		$first_old_url = isset( $needles[0] ) ? (string) $needles[0] : '';
+
+		return array(
+			'changed'      => $before_content !== $after_content,
+			'replacements' => (int) $replacement_count,
+			'source'       => isset( $row['source'] ) ? (string) $row['source'] : '',
+			'object_label' => isset( $row['object_label'] ) ? (string) $row['object_label'] : '',
+			'field'        => isset( $row['field'] ) ? (string) $row['field'] : '',
+			'before'       => $this->context_for_preview( (string) $before_content, $first_old_url ),
+			'after'        => $this->context_for_preview( (string) $after_content, $new_url ),
+		);
+	}
+
+	private function stringify_value( $value ) {
+		if ( is_scalar( $value ) || null === $value ) {
+			return (string) $value;
 		}
 
-		$result = '';
-		$length = strlen( $content );
-
-		for ( $i = 0; $i < $length; ) {
-			$matched_url = '';
-			foreach ( $old_urls as $old_url ) {
-				if ( $i === strpos( $content, $old_url, $i ) ) {
-					$matched_url = $old_url;
-					break;
-				}
-			}
-
-			if ( '' !== $matched_url ) {
-				$result .= $new_url;
-				$i      += strlen( $matched_url );
-				++$replacement_count;
-				continue;
-			}
-
-			$result .= $content[ $i ];
-			++$i;
-		}
-
-		return $result;
+		return (string) wp_json_encode( $value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
 	}
 }

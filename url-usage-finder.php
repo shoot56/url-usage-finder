@@ -3,7 +3,7 @@
  * Plugin Name: URL Usage Finder
  * Plugin URI: https://github.com/shoot56/url-usage-finder
  * Description: Find and replace URL usage in posts, meta, menus, and options.
- * Version: 0.1.0
+ * Version: 0.1.1
  * Author: Dmitry Shutko
  * Author URI: https://procoders.tech
  * License: GPL v2 or later
@@ -23,12 +23,17 @@ if ( ! defined( 'ABSPATH' ) ) {
 define( 'UUF_PLUGIN_FILE', __FILE__ );
 define( 'UUF_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'UUF_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
-define( 'UUF_PLUGIN_VERSION', '0.1.0' );
+define( 'UUF_PLUGIN_VERSION', '0.1.1' );
 
 if ( ! defined( 'UUF_DEBUG' ) ) {
 	define( 'UUF_DEBUG', false );
 }
 
+if ( ! defined( 'UUF_ENABLE_REPLACE' ) ) {
+	define( 'UUF_ENABLE_REPLACE', false );
+}
+
+require_once UUF_PLUGIN_DIR . 'includes/class-url-usage-finder-matcher.php';
 require_once UUF_PLUGIN_DIR . 'includes/class-url-usage-finder-scanner.php';
 require_once UUF_PLUGIN_DIR . 'includes/class-url-usage-finder-replacer.php';
 require_once UUF_PLUGIN_DIR . 'includes/class-url-usage-finder-admin.php';

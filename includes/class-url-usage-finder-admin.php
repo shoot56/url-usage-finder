@@ -68,23 +68,22 @@ class URL_Usage_Finder_Admin {
 			wp_die( esc_html__( 'You are not allowed to do this action.', 'url-usage-finder' ) );
 		}
 
+		if ( ! self::is_replace_enabled() ) {
+			wp_die( esc_html__( 'URL replacement is currently disabled.', 'url-usage-finder' ) );
+		}
+
 		check_admin_referer( self::ACTION_REPLACE );
 
 		$old_url = isset( $_POST['uuf_old_url'] ) ? self::sanitize_url_input( wp_unslash( $_POST['uuf_old_url'] ) ) : '';
 		$new_url = isset( $_POST['uuf_new_url'] ) ? self::sanitize_url_input( wp_unslash( $_POST['uuf_new_url'] ) ) : '';
-		$chosen  = isset( $_POST['uuf_selected'] ) ? array_map( 'intval', (array) wp_unslash( $_POST['uuf_selected'] ) ) : array();
+		$chosen  = isset( $_POST['uuf_selected'] ) ? array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['uuf_selected'] ) ) : array();
 		$sources = isset( $_POST['uuf_sources'] ) ? self::sanitize_sources( (array) wp_unslash( $_POST['uuf_sources'] ) ) : self::get_default_sources();
 
 		$data    = self::get_search_state();
 		$search  = self::run_search( $old_url, $sources );
 		$results = $search['results'];
 
-		$rows = array();
-		foreach ( $chosen as $index ) {
-			if ( isset( $results[ $index ] ) ) {
-				$rows[] = $results[ $index ];
-			}
-		}
+		$rows = self::select_rows_by_keys( $results, $chosen );
 
 		$summary = array(
 			'updated' => 0,
@@ -134,23 +133,22 @@ class URL_Usage_Finder_Admin {
 			wp_die( esc_html__( 'You are not allowed to do this action.', 'url-usage-finder' ) );
 		}
 
+		if ( ! self::is_replace_enabled() ) {
+			wp_die( esc_html__( 'URL replacement is currently disabled.', 'url-usage-finder' ) );
+		}
+
 		check_admin_referer( self::ACTION_PREVIEW );
 
 		$old_url = isset( $_POST['uuf_old_url'] ) ? self::sanitize_url_input( wp_unslash( $_POST['uuf_old_url'] ) ) : '';
 		$new_url = isset( $_POST['uuf_new_url'] ) ? self::sanitize_url_input( wp_unslash( $_POST['uuf_new_url'] ) ) : '';
-		$chosen  = isset( $_POST['uuf_selected'] ) ? array_map( 'intval', (array) wp_unslash( $_POST['uuf_selected'] ) ) : array();
+		$chosen  = isset( $_POST['uuf_selected'] ) ? array_map( 'sanitize_text_field', (array) wp_unslash( $_POST['uuf_selected'] ) ) : array();
 		$sources = isset( $_POST['uuf_sources'] ) ? self::sanitize_sources( (array) wp_unslash( $_POST['uuf_sources'] ) ) : self::get_default_sources();
 
 		$data    = self::get_search_state();
 		$search  = self::run_search( $old_url, $sources );
 		$results = $search['results'];
 
-		$rows = array();
-		foreach ( $chosen as $index ) {
-			if ( isset( $results[ $index ] ) ) {
-				$rows[] = $results[ $index ];
-			}
-		}
+		$rows = self::select_rows_by_keys( $results, $chosen );
 
 		$preview = array(
 			'changed' => 0,
@@ -302,6 +300,10 @@ class URL_Usage_Finder_Admin {
 	}
 
 	private static function render_replace_notice( $data ) {
+		if ( ! self::is_replace_enabled() ) {
+			return;
+		}
+
 		if ( empty( $_GET['replace'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			return;
 		}
@@ -444,35 +446,52 @@ class URL_Usage_Finder_Admin {
 		return defined( 'UUF_DEBUG' ) && UUF_DEBUG;
 	}
 
+	private static function is_replace_enabled() {
+		return defined( 'UUF_ENABLE_REPLACE' ) && UUF_ENABLE_REPLACE;
+	}
+
 	private static function render_results( $needle, $results, $sources ) {
 		if ( empty( $results ) ) {
 			return;
 		}
 
-		$current_page  = isset( $_GET['uuf_paged'] ) ? max( 1, (int) $_GET['uuf_paged'] ) : 1; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		$total_results = count( $results );
-		$total_pages   = (int) ceil( $total_results / self::RESULTS_PER_PAGE );
-		$current_page  = min( $current_page, $total_pages );
-		$offset        = ( $current_page - 1 ) * self::RESULTS_PER_PAGE;
-		$page_rows     = array_slice( $results, $offset, self::RESULTS_PER_PAGE, true );
+		$current_page   = isset( $_GET['uuf_paged'] ) ? max( 1, (int) $_GET['uuf_paged'] ) : 1; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$total_results  = count( $results );
+		$total_pages    = (int) ceil( $total_results / self::RESULTS_PER_PAGE );
+		$current_page   = min( $current_page, $total_pages );
+		$offset         = ( $current_page - 1 ) * self::RESULTS_PER_PAGE;
+		$page_rows      = array_slice( $results, $offset, self::RESULTS_PER_PAGE, true );
+		$replace_enabled = self::is_replace_enabled();
 		?>
 		<hr />
 		<h2><?php echo esc_html__( 'Search Results', 'url-usage-finder' ); ?></h2>
-		<p><?php printf( esc_html__( 'Found %d result(s). Select rows to preview or replace.', 'url-usage-finder' ), $total_results ); ?></p>
+		<p>
+			<?php
+			if ( $replace_enabled ) {
+				printf( esc_html__( 'Found %d result(s). Select rows to preview or replace.', 'url-usage-finder' ), $total_results );
+			} else {
+				printf( esc_html__( 'Found %d result(s). Replacement is currently disabled.', 'url-usage-finder' ), $total_results );
+			}
+			?>
+		</p>
 		<?php self::render_export_button( $needle, $sources ); ?>
 
-		<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
-			<input type="hidden" name="action" value="<?php echo esc_attr( self::ACTION_PREVIEW ); ?>" class="uuf-action-field" />
-			<?php wp_nonce_field( self::ACTION_PREVIEW ); ?>
-			<input type="hidden" name="uuf_old_url" value="<?php echo esc_attr( $needle ); ?>" />
-			<?php foreach ( $sources as $source ) : ?>
-				<input type="hidden" name="uuf_sources[]" value="<?php echo esc_attr( $source ); ?>" />
-			<?php endforeach; ?>
+		<?php if ( $replace_enabled ) : ?>
+			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+				<input type="hidden" name="action" value="<?php echo esc_attr( self::ACTION_PREVIEW ); ?>" class="uuf-action-field" />
+				<?php wp_nonce_field( self::ACTION_PREVIEW ); ?>
+				<input type="hidden" name="uuf_old_url" value="<?php echo esc_attr( $needle ); ?>" />
+				<?php foreach ( $sources as $source ) : ?>
+					<input type="hidden" name="uuf_sources[]" value="<?php echo esc_attr( $source ); ?>" />
+				<?php endforeach; ?>
+		<?php endif; ?>
 
 			<table class="widefat striped">
 				<thead>
 				<tr>
-					<th style="width:40px"><input type="checkbox" onclick="jQuery('.uuf-row-check').prop('checked', this.checked)" /></th>
+					<?php if ( $replace_enabled ) : ?>
+						<th style="width:40px"><input type="checkbox" onclick="jQuery('.uuf-row-check').prop('checked', this.checked)" /></th>
+					<?php endif; ?>
 					<th><?php echo esc_html__( 'Source', 'url-usage-finder' ); ?></th>
 					<th><?php echo esc_html__( 'Object', 'url-usage-finder' ); ?></th>
 					<th><?php echo esc_html__( 'View', 'url-usage-finder' ); ?></th>
@@ -483,9 +502,11 @@ class URL_Usage_Finder_Admin {
 				</tr>
 				</thead>
 				<tbody>
-				<?php foreach ( $page_rows as $index => $row ) : ?>
+				<?php foreach ( $page_rows as $row ) : ?>
 					<tr>
-						<td><input class="uuf-row-check" type="checkbox" name="uuf_selected[]" value="<?php echo esc_attr( $index ); ?>" /></td>
+						<?php if ( $replace_enabled ) : ?>
+							<td><input class="uuf-row-check" type="checkbox" name="uuf_selected[]" value="<?php echo esc_attr( self::build_row_key( $row ) ); ?>" /></td>
+						<?php endif; ?>
 						<td><?php echo esc_html( isset( $row['source'] ) ? (string) $row['source'] : '' ); ?></td>
 						<td>
 							<?php if ( ! empty( $row['edit_link'] ) ) : ?>
@@ -510,28 +531,32 @@ class URL_Usage_Finder_Admin {
 				</tbody>
 			</table>
 
-			<h3><?php echo esc_html__( 'Replace selected rows', 'url-usage-finder' ); ?></h3>
-			<p>
-				<label for="uuf_new_url"><?php echo esc_html__( 'New URL', 'url-usage-finder' ); ?></label><br />
-				<input id="uuf_new_url" name="uuf_new_url" class="regular-text code" type="text" required value="<?php echo isset( $_GET['preview'] ) && ! empty( $needle ) ? esc_attr( self::get_last_new_url() ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended ?>" />
-			</p>
+		<?php if ( $replace_enabled ) : ?>
+				<h3><?php echo esc_html__( 'Replace selected rows', 'url-usage-finder' ); ?></h3>
+				<p>
+					<label for="uuf_new_url"><?php echo esc_html__( 'New URL', 'url-usage-finder' ); ?></label><br />
+					<input id="uuf_new_url" name="uuf_new_url" class="regular-text code" type="text" required value="<?php echo isset( $_GET['preview'] ) && ! empty( $needle ) ? esc_attr( self::get_last_new_url() ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended ?>" />
+				</p>
 
-			<p class="submit">
-				<button type="submit" class="button"><?php echo esc_html__( 'Preview Selected (Dry Run)', 'url-usage-finder' ); ?></button>
-				<button type="button" class="button button-primary uuf-replace-submit"><?php echo esc_html__( 'Replace Selected', 'url-usage-finder' ); ?></button>
-			</p>
-		</form>
+				<p class="submit">
+					<button type="submit" class="button"><?php echo esc_html__( 'Preview Selected (Dry Run)', 'url-usage-finder' ); ?></button>
+					<button type="button" class="button button-primary uuf-replace-submit"><?php echo esc_html__( 'Replace Selected', 'url-usage-finder' ); ?></button>
+				</p>
+			</form>
+		<?php endif; ?>
 		<?php self::render_pagination( $current_page, $total_pages, $needle, $sources ); ?>
-		<script>
-			(function($){
-				$('.uuf-replace-submit').on('click', function(){
-					var $form = $(this).closest('form');
-					$form.find('.uuf-action-field').val('<?php echo esc_js( self::ACTION_REPLACE ); ?>');
-					$form.find('input[name="_wpnonce"]').val('<?php echo esc_js( wp_create_nonce( self::ACTION_REPLACE ) ); ?>');
-					$form.submit();
-				});
-			})(jQuery);
-		</script>
+		<?php if ( $replace_enabled ) : ?>
+			<script>
+				(function($){
+					$('.uuf-replace-submit').on('click', function(){
+						var $form = $(this).closest('form');
+						$form.find('.uuf-action-field').val('<?php echo esc_js( self::ACTION_REPLACE ); ?>');
+						$form.find('input[name="_wpnonce"]').val('<?php echo esc_js( wp_create_nonce( self::ACTION_REPLACE ) ); ?>');
+						$form.submit();
+					});
+				})(jQuery);
+			</script>
+		<?php endif; ?>
 		<?php
 	}
 
@@ -699,6 +724,54 @@ class URL_Usage_Finder_Admin {
 		return array( 'post_content', 'post_excerpt', 'post_meta', 'menus', 'options' );
 	}
 
+	private static function build_row_key( $row ) {
+		$source       = isset( $row['source'] ) ? (string) $row['source'] : '';
+		$object_id    = isset( $row['object_id'] ) ? (int) $row['object_id'] : 0;
+		$post_id      = isset( $row['post_id'] ) ? (int) $row['post_id'] : 0;
+		$field        = isset( $row['field'] ) ? (string) $row['field'] : '';
+		$object_label = isset( $row['object_label'] ) ? (string) $row['object_label'] : '';
+
+		return implode(
+			'|',
+			array(
+				$source,
+				$object_id,
+				$post_id,
+				$field,
+				$object_label,
+			)
+		);
+	}
+
+	private static function select_rows_by_keys( $results, $selected_keys ) {
+		$selected_keys = array_values( array_filter( array_map( 'strval', (array) $selected_keys ), 'strlen' ) );
+		if ( empty( $selected_keys ) ) {
+			return array();
+		}
+
+		$rows_by_key = array();
+		foreach ( (array) $results as $row ) {
+			$key = self::build_row_key( $row );
+			if ( '' === $key ) {
+				continue;
+			}
+			if ( ! isset( $rows_by_key[ $key ] ) ) {
+				$rows_by_key[ $key ] = array();
+			}
+			$rows_by_key[ $key ][] = $row;
+		}
+
+		$rows = array();
+		foreach ( $selected_keys as $selected_key ) {
+			if ( empty( $rows_by_key[ $selected_key ] ) ) {
+				continue;
+			}
+			$rows[] = array_shift( $rows_by_key[ $selected_key ] );
+		}
+
+		return $rows;
+	}
+
 	private static function get_search_state() {
 		$user_id = get_current_user_id();
 		if ( $user_id <= 0 ) {
@@ -762,6 +835,10 @@ class URL_Usage_Finder_Admin {
 	}
 
 	private static function render_preview_notice( $data ) {
+		if ( ! self::is_replace_enabled() ) {
+			return;
+		}
+
 		if ( empty( $_GET['preview'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			return;
 		}

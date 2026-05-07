@@ -66,6 +66,12 @@ WordPress plugin to find and safely replace URL usage across multiple data sourc
 
 ## Changelog
 
+### 0.1.1
+
+- Improved URL variant matching and boundary handling.
+- Unified search and replacement matching logic.
+- Temporarily disabled replacement UI and handlers by default.
+
 ### 0.1.0
 
 - Initial release.
