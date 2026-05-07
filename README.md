@@ -66,6 +66,11 @@ WordPress plugin to find and safely replace URL usage across multiple data sourc
 
 ## Changelog
 
+### 0.1.2
+
+- Preserve percent-encoded URL input during search.
+- Add encoded, decoded, and lowercase percent-encoding URL variants.
+
 ### 0.1.1
 
 - Improved URL variant matching and boundary handling.

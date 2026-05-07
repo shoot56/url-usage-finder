@@ -831,7 +831,11 @@ class URL_Usage_Finder_Admin {
 	}
 
 	private static function sanitize_url_input( $value ) {
-		return trim( sanitize_text_field( (string) $value ) );
+		$value = wp_check_invalid_utf8( (string) $value );
+		$value = wp_strip_all_tags( $value );
+		$value = preg_replace( '/[\r\n\t\0\x0B]+/', '', $value );
+
+		return trim( (string) $value );
 	}
 
 	private static function render_preview_notice( $data ) {

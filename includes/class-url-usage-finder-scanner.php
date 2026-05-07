@@ -369,6 +369,7 @@ class URL_Usage_Finder_Scanner {
 		}
 
 		$variants = $this->add_trailing_slash_variants( $variants );
+		$variants = $this->add_url_encoded_variants( $variants );
 		$variants = $this->add_json_escaped_variants( $variants );
 
 		return array_values( array_unique( array_filter( $variants, 'strlen' ) ) );
@@ -409,6 +410,83 @@ class URL_Usage_Finder_Scanner {
 		}
 
 		return $expanded;
+	}
+
+	private function add_url_encoded_variants( $variants ) {
+		$expanded = $variants;
+
+		foreach ( $variants as $variant ) {
+			$decoded = rawurldecode( $variant );
+			if ( $decoded !== $variant ) {
+				$expanded[] = $decoded;
+			}
+
+			$encoded = $this->encode_url_path_segments( $decoded );
+			if ( $encoded !== $decoded ) {
+				$expanded[] = $encoded;
+				$expanded[] = $this->lowercase_percent_encoding( $encoded );
+			}
+		}
+
+		return $expanded;
+	}
+
+	private function lowercase_percent_encoding( $url ) {
+		return preg_replace_callback(
+			'/%[0-9A-F]{2}/',
+			static function ( $matches ) {
+				return strtolower( $matches[0] );
+			},
+			(string) $url
+		);
+	}
+
+	private function encode_url_path_segments( $url ) {
+		$parts = $this->split_url_path_for_encoding( $url );
+		if ( empty( $parts['path'] ) ) {
+			return $url;
+		}
+
+		$encoded_path = implode(
+			'/',
+			array_map(
+				static function ( $segment ) {
+					return rawurlencode( rawurldecode( $segment ) );
+				},
+				explode( '/', $parts['path'] )
+			)
+		);
+
+		return $parts['prefix'] . $encoded_path . $parts['suffix'];
+	}
+
+	private function split_url_path_for_encoding( $url ) {
+		$prefix    = '';
+		$path      = (string) $url;
+		$suffix    = '';
+		$query_pos = strcspn( $path, '?#' );
+
+		if ( $query_pos < strlen( $path ) ) {
+			$suffix = substr( $path, $query_pos );
+			$path   = substr( $path, 0, $query_pos );
+		}
+
+		if ( preg_match( '#^([a-z][a-z0-9+\-.]*://[^/]*)(/.*)?$#i', $path, $matches ) ) {
+			$prefix = $matches[1];
+			$path   = isset( $matches[2] ) ? $matches[2] : '';
+		} elseif ( preg_match( '#^(//[^/]*)(/.*)?$#', $path, $matches ) ) {
+			$prefix = $matches[1];
+			$path   = isset( $matches[2] ) ? $matches[2] : '';
+		} elseif ( preg_match( '~^([^/?#]+\.[^/?#]*)(/.*)$~', $path, $matches ) ) {
+			$prefix = $matches[1];
+			$path   = $matches[2];
+		}
+
+		return array(
+			'prefix' => $prefix,
+			'path'   => $path,
+			'suffix' => $suffix,
+		);
 	}
 
 	private function add_json_escaped_variants( $variants ) {
